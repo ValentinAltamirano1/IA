@@ -3,116 +3,116 @@
 #include <ESP8266WebServer.h>
 #include <time.h>
 
-const char* ssid = "Valentin";
+// —————— Tu Wi-Fi aquí ——————
+const char* ssid     = "Valentin";
 const char* password = "blaval02";
-
-String luz = "";
-String humedad = "";
-String temperatura = "";
-String condicion = "";
-int contador = 0;
 
 ESP8266WebServer server(80);
 
+// Almacenar lecturas temporales
+String lastLuz, lastHum, lastTemp;
+int    contador = 0;
+bool   readyToLog = false;
+
+// Estado actual (inicia “saludable”)
+String currentState = "saludable";
+
 void setup() {
   Serial.begin(9600);
-  Serial.setTimeout(2000);
-
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-  }
+  while(WiFi.status() != WL_CONNECTED) delay(200);
 
-  configTime(-3 * 3600, 0, "pool.ntp.org");
+  configTime(-3*3600, 0, "pool.ntp.org");
+  SPIFFS.begin();
 
-  if (!SPIFFS.begin()) {
-    Serial.println("Error montando SPIFFS");
-    return;
-  }
-
-  if (!SPIFFS.exists("/registro.csv")) {
-    File f = SPIFFS.open("/registro.csv", "w");
-    f.println("luz,humedad,temperatura,condicion,fecha_hora");
+  // Si no existe, crea CSV con cabecera
+  if(!SPIFFS.exists("/registro.csv")) {
+    File f = SPIFFS.open("/registro.csv","w");
+    f.println("luz,humedad,temperatura,estado,fecha_hora");
     f.close();
   }
 
-  server.on("/", handleRoot);
-  server.on("/registro.csv", handleCSV);
-  server.begin();
+  // Rutas web
+  server.serveStatic("/","SPIFFS","/state.html");
+  server.on("/status",  HTTP_GET,  handleStatus);
+  server.on("/setState",HTTP_POST, handleSetState);
+  server.serveStatic("/registro.csv","SPIFFS","/registro.csv");
 
-  Serial.println();
-  Serial.println("Conectado a WiFi.");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP()); 
-  Serial.println("ESP8266 listo y esperando datos...");
+  server.begin();
 }
 
+// Recibe por Serial las 3 líneas y marca listo para grabar
 void loop() {
-  if (Serial.available()) {
-    String linea = Serial.readStringUntil('\n');
-    linea.trim();
-
-    if (linea.startsWith("Valor luz:")) {
-      luz = linea.substring(11, linea.indexOf(" -"));
-      contador++;
-    } else if (linea.startsWith("Valor humedad:")) {
-      humedad = linea.substring(15);
-      contador++;
-    } else if (linea.startsWith("Temperatura:")) {
-      temperatura = linea.substring(13, linea.indexOf(" °"));
-      contador++;
-    } else if (linea.startsWith("Condicion:")) {
-      condicion = linea.substring(11);
-      contador++;
+  if(Serial.available()) {
+    String linea = Serial.readStringUntil('\n'); linea.trim();
+    if(linea.startsWith("Valor luz:")) {
+      lastLuz = linea.substring(11); contador++;
     }
-
-    if (contador == 4) {
-      String fechaHora = getFechaHora();
-      File archivo = SPIFFS.open("/registro.csv", "a");
-      if (archivo) {
-        archivo.print(luz);
-        archivo.print(",");
-        archivo.print(humedad);
-        archivo.print(",");
-        archivo.print(temperatura);
-        archivo.print(",");
-        archivo.print(condicion);
-        archivo.print(",");
-        archivo.println(fechaHora);
-        archivo.close();
-        Serial.println("📁 Guardado en CSV:");
-        Serial.println(luz + "," + humedad + "," + temperatura + "," + condicion + "," + fechaHora);
-      }
-      // Reiniciar para próxima lectura
+    else if(linea.startsWith("Valor humedad:")) {
+      lastHum = linea.substring(15); contador++;
+    }
+    else if(linea.startsWith("Temperatura:")) {
+      lastTemp = linea.substring(13, linea.indexOf(" °")); contador++;
+    }
+    if(contador==3) {
+      readyToLog = true;
       contador = 0;
-      luz = "";
-      humedad = "";
-      temperatura = "";
-      condicion = "";
     }
   }
+
+  // En cuanto esté lista la muestra, la graba usando currentState
+  if(readyToLog) {
+    logToCSV();
+    readyToLog = false;
+  }
+
   server.handleClient();
 }
 
-String getFechaHora() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "sin_fecha";
-  char buffer[30];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &timeinfo);
-  return String(buffer);
+void logToCSV() {
+  String ts = getFechaHora();
+  File f = SPIFFS.open("/registro.csv","a");
+  f.printf("%s,%s,%s,%s,%s\n",
+           lastLuz.c_str(),
+           lastHum.c_str(),
+           lastTemp.c_str(),
+           currentState.c_str(),
+           ts.c_str());
+  f.close();
+  Serial.printf("👉 %s,%s,%s,%s,%s\n",
+    lastLuz.c_str(), lastHum.c_str(),
+    lastTemp.c_str(), currentState.c_str(),
+    ts.c_str());
 }
 
-void handleRoot() {
-  server.send(200, "text/html", "<h1>ESP8266 activo</h1><a href='/registro.csv'>Ver CSV</a>");
+// Devuelve JSON con últimas 3 lecturas + estado actual
+void handleStatus() {
+  if(!readyToLog) {
+    // aunque no haya nueva muestra, devolvemos el último estado
+  }
+  String json = "{";
+  json += "\"lux\":\""+lastLuz+"\","; 
+  json += "\"hum\":\""+lastHum+"\","; 
+  json += "\"temp\":\""+lastTemp+"\","; 
+  json += "\"estado\":\""+currentState+"\"}";
+  server.send(200,"application/json",json);
 }
 
-void handleCSV() {
-  if (!SPIFFS.exists("/registro.csv")) {
-    server.send(404, "text/plain", "Archivo no encontrado");
+// Actualiza currentState desde el formulario
+void handleSetState() {
+  if(!server.hasArg("estado")) {
+    server.send(400,"text/plain","Falta parámetro estado");
     return;
   }
+  currentState = server.arg("estado");
+  server.send(200,"text/plain","Estado cambiado a "+currentState);
+}
 
-  File f = SPIFFS.open("/registro.csv", "r");
-  server.streamFile(f, "text/csv");
-  f.close();
+// Obtiene fecha/hora formateada
+String getFechaHora() {
+  struct tm ti;
+  if(!getLocalTime(&ti)) return "1970-01-01 00:00:00";
+  char buf[20];
+  strftime(buf,sizeof(buf),"%Y-%m-%d %H:%M:%S",&ti);
+  return String(buf);
 }
