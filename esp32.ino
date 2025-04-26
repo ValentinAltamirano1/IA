@@ -3,19 +3,21 @@
 #include <ESP8266WebServer.h>
 #include <time.h>
 
+// —————— Credenciales Wi-Fi ——————
 const char* ssid     = "Valentin";
 const char* password = "blaval02";
 
 ESP8266WebServer server(80);
 
 // —————— Variables globales ——————
-String lastLuz = "", lastHum = "", lastTemp = "";
+String lastLuz  = "";
+String lastHum  = "";
+String lastTemp = "";
 int    contador = 0;
 bool   readyToLog = false;
+String currentState = "Verde saludable";  // estado inicial
 
-String currentState = "Verde saludable";  // Estado inicial
-
-// —————— HTML+CSS+JS embebido en PROGMEM ——————
+// —————— Página web embebida ——————
 const char PAGE_STATE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="es">
@@ -37,8 +39,7 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
     select:focus,button:focus{outline:none;border-color:#2a6f2a;box-shadow:0 0 0 2px rgba(42,111,42,0.2);}
     button{background:#2a6f2a;color:#fff;cursor:pointer;transition:background 0.2s;margin-bottom:1rem;}
     button:hover{background:#3b8f3b;}
-    .description{font-size:0.9rem;color:#555;margin-top:0.25rem;padding-left:0.5rem;
-      border-left:3px solid #2a6f2a;background:#f0fff0;border-radius:4px;}
+    .description{font-size:0.9rem;color:#555;margin-top:0.25rem;padding-left:0.5rem;border-left:3px solid #2a6f2a;background:#f0fff0;border-radius:4px;}
     a.csv-link{display:inline-block;text-decoration:none;color:#2a6f2a;font-size:0.9rem;margin-top:0.5rem;}
     a.csv-link:hover{text-decoration:underline;}
   </style>
@@ -55,9 +56,9 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
     </div>
     <fieldset>
       <legend>Última lectura</legend>
-      <label>Luz: <span id="lux">–</span> lux</label>
-      <label>Humedad: <span id="hum">–</span> %</label>
-      <label>Temp.: <span id="temp">–</span> °C</label>
+      <label>Luz: <span id="lux">–</span></label>
+      <label>Humedad: <span id="hum">–</span></label>
+      <label>Temp.: <span id="temp">–</span></label>
     </fieldset>
     <form id="stateForm" style="display:none;" onsubmit="cambiarEstado(event)">
       <label for="estadoSel">Selecciona nueva condición:</label>
@@ -68,9 +69,7 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
         <option value="Clorosis">Clorosis</option>
         <option value="Quemaduras">Quemaduras</option>
       </select>
-      <div class="description" id="desc">
-        Selecciona una opción para ver su descripción.
-      </div>
+      <div class="description" id="desc">Selecciona una opción para ver su descripción.</div>
       <button type="submit">Guardar</button>
     </form>
     <a class="csv-link" href="/registro.csv" target="_blank">📁 Ver histórico completo</a>
@@ -89,8 +88,8 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
       document.getElementById('lux').innerText       = d.lux  || '–';
       document.getElementById('hum').innerText       = d.hum  || '–';
       document.getElementById('temp').innerText      = d.temp || '–';
-      document.getElementById('estadoTxt').innerText = d.estado || '–';
-      document.getElementById('estadoSel').value     = d.estado || 'Verde saludable';
+      document.getElementById('estadoTxt').innerText = d.estado|| '–';
+      document.getElementById('estadoSel').value     = d.estado|| 'Verde saludable';
       updateDesc();
     }
     function toggleForm(){
@@ -114,27 +113,25 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
       toggleForm();
       cargar();
     }
-    setInterval(cargar, 8000);
+    setInterval(cargar,8000);
     cargar();
   </script>
 </body>
 </html>
 )rawliteral";
 
-// —————— Helpers ——————
-
+// —————— Handlers y utilidades ——————
 void handleStatus(){
-  // Aunque no haya lectura nueva, devolvemos últimos valores
   String j = "{\"lux\":\""+lastLuz
            +"\",\"hum\":\""+lastHum
            +"\",\"temp\":\""+lastTemp
            +"\",\"estado\":\""+currentState+"\"}";
-  server.send(200, "application/json", j);
+  server.send(200,"application/json",j);
 }
 
 void handleSetState(){
   if(!server.hasArg("estado")){
-    server.send(400,"text/plain","Missing estado");
+    server.send(400,"text/plain","Falta parametro estado");
     return;
   }
   currentState = server.arg("estado");
@@ -166,20 +163,19 @@ void setup(){
   WiFi.begin(ssid,password);
   while(WiFi.status()!=WL_CONNECTED) delay(200);
 
-  configTime(-3*3600, 0, "pool.ntp.org");
+  configTime(-3*3600,0,"pool.ntp.org");
   SPIFFS.begin();
 
-  // Crea CSV si no existe
   if(!SPIFFS.exists("/registro.csv")){
     File f = SPIFFS.open("/registro.csv","w");
     f.println("luz,humedad,temperatura,estado,fecha_hora");
     f.close();
   }
 
-  server.on("/",        HTTP_GET,  [](){ server.send_P(200,"text/html",PAGE_STATE); });
-  server.on("/status",  HTTP_GET,  handleStatus);
-  server.on("/setState",HTTP_POST, handleSetState);
-  server.on("/registro.csv",HTTP_GET, [](){
+  server.on("/",         HTTP_GET,  [](){ server.send_P(200,"text/html",PAGE_STATE); });
+  server.on("/status",   HTTP_GET,  handleStatus);
+  server.on("/setState", HTTP_POST, handleSetState);
+  server.on("/registro.csv", HTTP_GET, [](){
     File f = SPIFFS.open("/registro.csv","r");
     server.streamFile(f,"text/csv");
     f.close();
@@ -189,16 +185,18 @@ void setup(){
 }
 
 void loop(){
-  // Recoge 3 líneas de Serial y marca listo
   if(Serial.available()){
     String l = Serial.readStringUntil('\n');
     l.trim();
-    if(l.startsWith("Valor luz:")){
-      lastLuz = l.substring(11); contador++;
-    } else if(l.startsWith("Valor humedad:")){
-      lastHum = l.substring(15); contador++;
-    } else if(l.startsWith("Temperatura:")){
-      lastTemp = l.substring(13); contador++;
+    if(contador==0){
+      lastLuz = l;  // primer println() → brillo
+      contador++;
+    } else if(contador==1){
+      lastHum = l;  // segundo → humedad
+      contador++;
+    } else if(contador==2){
+      lastTemp = l; // tercero → temperatura
+      contador++;
     }
     if(contador==3){
       readyToLog = true;
