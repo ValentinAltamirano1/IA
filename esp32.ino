@@ -15,9 +15,9 @@ String lastHum  = "";
 String lastTemp = "";
 int    contador = 0;
 bool   readyToLog = false;
-String currentState = "Verde saludable";  // estado inicial
+String currentState = "Verde saludable";
 
-// —————— Página web embebida ——————
+// ——————  Web embebida ——————
 const char PAGE_STATE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="es">
@@ -120,7 +120,6 @@ const char PAGE_STATE[] PROGMEM = R"rawliteral(
 </html>
 )rawliteral";
 
-// —————— Handlers y utilidades ——————
 void handleStatus(){
   String j = "{\"lux\":\""+lastLuz
            +"\",\"hum\":\""+lastHum
@@ -184,27 +183,32 @@ void setup(){
   server.begin();
 }
 
-void loop(){
-  if(Serial.available()){
-    String l = Serial.readStringUntil('\n');
-    l.trim();
-    if(contador==0){
-      lastLuz = l;  // primer println() → brillo
+void loop() {
+  if (Serial.available()) {
+    String linea = Serial.readStringUntil('\n');
+    linea.trim();
+
+    if (linea.startsWith("Valor luz:")) {
+      lastLuz = linea.substring(11, linea.indexOf(" -"));
       contador++;
-    } else if(contador==1){
-      lastHum = l;  // segundo → humedad
+    } else if (linea.startsWith("Valor humedad:")) {
+      lastHum = linea.substring(15);
       contador++;
-    } else if(contador==2){
-      lastTemp = l; // tercero → temperatura
+    } else if (linea.startsWith("Temperatura:")) {
+      lastTemp = linea.substring(13, linea.indexOf(" °"));
       contador++;
-    }
-    if(contador==3){
-      readyToLog = true;
-      contador = 0;
+    } else if (linea.startsWith("Condicion:")) {
+      // no hacer nada pq sino pisa con lo que viene del arduino
+      contador++;
     }
   }
 
-  if(readyToLog){
+  if (contador == 4) {
+    readyToLog = true;
+    contador = 0;
+  }
+
+  if (readyToLog) {
     logToCSV();
     readyToLog = false;
   }
