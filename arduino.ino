@@ -26,11 +26,9 @@ void loop() {
     valor_luz  = 1023 - analogRead(sensor_luz);
     brillo_led = map(valor_luz, 0, 1023, 0, 255);
     analogWrite(led_rojo, brillo_led);
-    Serial.println(brillo_led);
 
     // ===== HUMEDAD =====
     int humedad = analogRead(sensor_humedad);
-    Serial.println(humedad);
 
     // ===== TEMPERATURA (NTC) =====
     int adcValue   = analogRead(sensor_temp);
@@ -38,8 +36,17 @@ void loop() {
     double resistance = (5.0 - voltage) / voltage * 4700.0;
     double tempC = 1.0 / (log(resistance / 10000.0) / 3950.0
                    + 1.0 / (25.0 + 273.15)) - 273.15;
-    Serial.println(tempC);
 
     Serial.println();
+
+    Serial.print("Valor luz: ");
+    Serial.println(brillo_led);
+
+    Serial.print("Valor humedad: ");
+    Serial.println(humedad);
+
+    Serial.print("Temperatura: ");
+    Serial.print(tempC);
+    Serial.println(" °C");
   }
 }

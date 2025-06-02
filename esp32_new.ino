@@ -2,6 +2,8 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <time.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
 time_t currentTime = time(nullptr);
 
@@ -10,6 +12,7 @@ const char* ssid     = "Valentin";
 const char* password = "blaval02";
 
 ESP8266WebServer server(80);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 // —————— Variables globales ——————
 String lastLuz  = "";
@@ -277,6 +280,16 @@ void setup(){
     server.send(200, "text/plain", "Riego registrado");
   });
 
+  Serial.begin(9600);
+
+  Wire.begin(D2, D1);
+  delay(100);
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Esperando");
+
   server.begin();
 }
 
@@ -300,7 +313,7 @@ void loop() {
     }
   }
 
-  if (contador == 4) {
+  if (contador == 3) {
     readyToLog = true;
     contador = 0;
   }
@@ -339,12 +352,21 @@ void loop() {
       hour_scaled, weekday_scaled, hrsw_scaled
     );
     predictedState = etiquetasEstado[code];
-    Serial.printf("Predicción: %s | Luz: %s | Hum: %s | Temp: %s | Hora: %.2f | Desde riego: %.2f hrs\n",
-      currentState.c_str(), lastLuz.c_str(), lastHum.c_str(), lastTemp.c_str(), hour, hrs_w);
- 
+
     logToCSV(flagRegado);
     flagRegado = false;
     readyToLog = false;
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Estado:");
+
+    lcd.setCursor(0, 1);
+    if (predictedState == "Verde saludable") {
+      lcd.print("OK");
+    } else {
+      lcd.print("AYUDA");
+    }
   }
 
   server.handleClient();
